@@ -8,20 +8,21 @@ import com.google.android.gms.wearable.MessageEvent;
 import com.google.android.gms.wearable.WearableListenerService;
 
 /**
- * Created by heim on 10/2/16.
+ * message api listener
  */
 
 public class WearableMessageListenerService extends WearableListenerService {
     private static final String LOG_TAG = WearableMessageListenerService.class.getSimpleName();
 
-    private static final String START_ACTIVITY_PATH = "/start-activity";
+    private static final String SYNC_WEATHER_PATH = "/sync-weather";
 
     @Override
     public void onMessageReceived(MessageEvent messageEvent) {
         super.onMessageReceived(messageEvent);
-
         Log.i(LOG_TAG, "onMessageReceived");
-        SunshineSyncAdapter.syncImmediately(getApplicationContext());
+        if(messageEvent.getPath().equals(SYNC_WEATHER_PATH)) {
+            SunshineSyncAdapter.syncImmediately(getApplicationContext());
+        }
 
     }
 

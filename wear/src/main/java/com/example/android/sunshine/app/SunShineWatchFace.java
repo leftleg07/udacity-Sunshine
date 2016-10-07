@@ -31,28 +31,28 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
-import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.common.api.ResultCallback;
-import com.google.android.gms.wearable.CapabilityApi;
-import com.google.android.gms.wearable.CapabilityInfo;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.MessageApi;
 import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
 
+import org.greenrobot.eventbus.EventBus;
+import org.greenrobot.eventbus.Subscribe;
+
 import java.lang.ref.WeakReference;
 import java.util.Calendar;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Set;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -62,8 +62,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class SunShineWatchFace extends CanvasWatchFaceService  {
 
-    private static final String LOG_TAG = SunShineWatchFace.class.getSimpleName();
-
+    private static final String TAG = SunShineWatchFace.class.getSimpleName();
 
     private static final Typeface NORMAL_TYPEFACE =
             Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
@@ -105,12 +104,11 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
         }
     }
 
+    private class Engine extends CanvasWatchFaceService.Engine implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, DataApi.DataListener {
 
-    private class Engine extends CanvasWatchFaceService.Engine implements GoogleApiClient.OnConnectionFailedListener, GoogleApiClient.ConnectionCallbacks, CapabilityApi.CapabilityListener {
-        private final String TAG = Engine.class.getSimpleName();
+        private static final String SYNC_WEATHER_PATH = "/sync-weather";
 
         /* name of the capability that the phone side provides */
-        private final String CONFIRMATION_HANDLER_CAPABILITY_NAME = "confirmation_handler";
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
@@ -141,28 +139,26 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
         float mMinYOffset;
         float mMinXOffset;
 
+
+
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
          * disable anti-aliasing in ambient mode.
          */
         boolean mLowBitAmbient;
-        private int mWeatherId = 200;
-        private double mMaxTemperature = 1f;
-        private double mMinTemperature = 0f;
+        private int mWeatherId = 0;
+        private double mHigh = 0f;
+        private double mLow = 0f;
+        private String mDesc;
 
         private GoogleApiClient mGoogleApiClient;
-        /* the preferred note that can handle the confirmation capability */
-        private Node mConfirmationHandlerNode;
+
 
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
 
-            mGoogleApiClient = new GoogleApiClient.Builder(getApplicationContext())
-                    .addApi(Wearable.API)
-                    .addOnConnectionFailedListener(this)
-                    .addConnectionCallbacks(this)
-                    .build();
+
 
             setWatchFaceStyle(new WatchFaceStyle.Builder(SunShineWatchFace.this)
                     .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
@@ -203,6 +199,29 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
             mMinTextPaint = createTextPaint(resources.getColor(R.color.secondary_text));
 
             mCalendar = Calendar.getInstance();
+
+            mGoogleApiClient = new GoogleApiClient.Builder(getApplicationContext())
+                    .addApi(Wearable.API)
+                    .addConnectionCallbacks(this)
+                    .addOnConnectionFailedListener(this)
+                    .build();
+
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    NodeApi.GetConnectedNodesResult nodes = Wearable.NodeApi.getConnectedNodes(mGoogleApiClient).await();
+                    for(Node node : nodes.getNodes()) {
+                        MessageApi.SendMessageResult result = Wearable.MessageApi.sendMessage(mGoogleApiClient, node.getId(), SYNC_WEATHER_PATH, new byte[0]).await();
+                        if(!result.getStatus().isSuccess()){
+                            //message failed..
+                            Log.i(TAG, "message failed!");
+                        } else {
+                            //message sent!
+                            Log.i(TAG, "message sent!");
+                        }
+                    }
+                }
+            }).start();
         }
 
 
@@ -215,113 +234,6 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
             super.onDestroy();
         }
 
-        private Collection<String> getNodes() {
-            HashSet<String> results = new HashSet<>();
-            NodeApi.GetConnectedNodesResult nodes =
-                    Wearable.NodeApi.getConnectedNodes(mGoogleApiClient).await();
-
-            for (Node node : nodes.getNodes()) {
-                results.add(node.getId());
-            }
-
-            return results;
-        }
-
-        @Override
-        public void onConnected(Bundle connectionHint) {
-            Log.d(TAG, "onConnected(): Successfully connected to Google API client");
-            setupConfirmationHandlerNode();
-                sendStartActivityMessage();
-        }
-
-        private static final String START_ACTIVITY_PATH = "/start-activity";
-
-        private void sendStartActivityMessage() {
-            if (mConfirmationHandlerNode != null) {
-                Wearable.MessageApi.sendMessage(mGoogleApiClient, mConfirmationHandlerNode.getId(),
-                        START_ACTIVITY_PATH, new byte[0])
-                        .setResultCallback(getSendMessageResultCallback(mConfirmationHandlerNode));
-            } else {
-                Toast.makeText(getApplicationContext(), R.string.no_device_found, Toast.LENGTH_SHORT).show();
-            }
-        }
-        private ResultCallback<MessageApi.SendMessageResult> getSendMessageResultCallback(
-                final Node node) {
-            return new ResultCallback<MessageApi.SendMessageResult>() {
-                @Override
-                public void onResult(MessageApi.SendMessageResult sendMessageResult) {
-                    if (!sendMessageResult.getStatus().isSuccess()) {
-                        Log.e(TAG, "Failed to send message with status "
-                                + sendMessageResult.getStatus());
-                    } else {
-                        Log.d(TAG, "Sent confirmation message to node " + node.getDisplayName());
-                    }
-                }
-            };
-        }
-
-        private void setupConfirmationHandlerNode() {
-            Wearable.CapabilityApi.addCapabilityListener(
-                    mGoogleApiClient, this, CONFIRMATION_HANDLER_CAPABILITY_NAME);
-
-            Wearable.CapabilityApi.getCapability(
-                    mGoogleApiClient, CONFIRMATION_HANDLER_CAPABILITY_NAME,
-                    CapabilityApi.FILTER_REACHABLE).setResultCallback(
-                    new ResultCallback<CapabilityApi.GetCapabilityResult>() {
-                        @Override
-                        public void onResult(CapabilityApi.GetCapabilityResult result) {
-                            if (!result.getStatus().isSuccess()) {
-                                Log.e(TAG, "setupConfirmationHandlerNode() Failed to get capabilities, "
-                                        + "status: " + result.getStatus().getStatusMessage());
-                                return;
-                            }
-                            updateConfirmationCapability(result.getCapability());
-                        }
-                    });
-        }
-
-        private void updateConfirmationCapability(CapabilityInfo capabilityInfo) {
-            Set<Node> connectedNodes = capabilityInfo.getNodes();
-            if (connectedNodes.isEmpty()) {
-                mConfirmationHandlerNode = null;
-            } else {
-                mConfirmationHandlerNode = pickBestNode(connectedNodes);
-            }
-        }
-
-        /**
-         * We pick a node that is capabale of handling the confirmation. If there is more than one,
-         * then we would prefer the one that is directly connected to this device. In general,
-         * depending on the situation and requirements, the "best" node might be picked based on other
-         * criteria.
-         */
-        private Node pickBestNode(Set<Node> connectedNodes) {
-            Node best = null;
-            if (connectedNodes != null) {
-                for (Node node : connectedNodes) {
-                    if (node.isNearby()) {
-                        return node;
-                    }
-                    best = node;
-                }
-            }
-            return best;
-        }
-        @Override
-        public void onConnectionSuspended(int cause) {
-            mConfirmationHandlerNode = null;
-            Log.d(TAG, "onConnectionSuspended(): Connection to Google API client was suspended");
-        }
-
-        @Override
-        public void onConnectionFailed(ConnectionResult result) {
-            Log.e(TAG, "onConnectionFailed(): Failed to connect, with result: " + result);
-        }
-
-        @Override
-        public void onCapabilityChanged(CapabilityInfo capabilityInfo) {
-            updateConfirmationCapability(capabilityInfo);
-        }
 
         private Paint createTextPaint(int textColor) {
             Paint paint = new Paint();
@@ -336,9 +248,8 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
             super.onVisibilityChanged(visible);
 
             if (visible) {
-                if(!mGoogleApiClient.isConnected()) {
-                    mGoogleApiClient.connect();
-                }
+                EventBus.getDefault().register(this);
+                mGoogleApiClient.connect();
                 registerReceiver();
 
 
@@ -346,10 +257,13 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
                 mCalendar.setTimeZone(TimeZone.getDefault());
                 invalidate();
             } else {
-                if(mGoogleApiClient.isConnected()) {
+                if ((mGoogleApiClient != null) && mGoogleApiClient.isConnected()) {
+                    Wearable.DataApi.removeListener(mGoogleApiClient, this);
                     mGoogleApiClient.disconnect();
                 }
                 unregisterReceiver();
+
+                EventBus.getDefault().unregister(this);
             }
 
             // Whether the timer should be running depends on whether we're visible (as well as
@@ -447,18 +361,20 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
                 canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
                 String day = Utility.getFriendlyDayString(now);
                 canvas.drawText(day, mXOffset, mDayYOffset, mDayTextPaint);
+
                 int iconId = Utility.getIconResourceForWeatherCondition(mWeatherId);
-                Bitmap icon = BitmapFactory.decodeResource(getResources(), iconId);
-                canvas.drawBitmap(icon, mXOffset, mIconYOffset, mIconPaint);
+                if(iconId >= 0) {
+                    Bitmap icon = BitmapFactory.decodeResource(getResources(), iconId);
+                    canvas.drawBitmap(icon, mXOffset, mIconYOffset, mIconPaint);
 
-                String condition = Utility.getStringForWeatherCondition(getApplicationContext(), mWeatherId);
-                canvas.drawText(condition, mXOffset, mConditionYOffset, mConditionTextPaint);
+                    canvas.drawText(mDesc, mXOffset, mConditionYOffset, mConditionTextPaint);
 
-                String formattedMaxTemperature = Utility.formatTemperature(getApplicationContext(), mMaxTemperature);
-                canvas.drawText(formattedMaxTemperature, mMaxXOffset, mMaxYOffset, mMaxTextPaint);
+                    String formattedMaxTemperature = Utility.formatTemperature(getApplicationContext(), mHigh);
+                    canvas.drawText(formattedMaxTemperature, mMaxXOffset, mMaxYOffset, mMaxTextPaint);
 
-                String formattedMixTemperature = Utility.formatTemperature(getApplicationContext(), mMinTemperature);
-                canvas.drawText(formattedMixTemperature, mMinXOffset, mMinYOffset, mMinTextPaint);
+                    String formattedMixTemperature = Utility.formatTemperature(getApplicationContext(), mLow);
+                    canvas.drawText(formattedMixTemperature, mMinXOffset, mMinYOffset, mMinTextPaint);
+                }
             }
 
 
@@ -504,7 +420,53 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
             }
         }
 
+        @Override
+        public void onConnected(@Nullable Bundle bundle) {
+            Wearable.DataApi.addListener(mGoogleApiClient, this);
+        }
+
+        @Override
+        public void onConnectionSuspended(int i) {
+
+        }
+
+        @Override
+        public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
+
+        }
 
 
+
+        @Override
+        public void onDataChanged(DataEventBuffer dataEventBuffer) {
+            Log.i(TAG, "onDataChanged");
+
+        }
+
+        @Subscribe
+        public void onWeatherEvent(WeatherEvent event) {
+            mWeatherId = event.weatherId;
+            mHigh = event.high;
+            mLow = event.low;
+            mDesc = event.desc;
+
+            invalidate();
+        }
     }
+
+    public static final class WeatherEvent {
+        public final int weatherId;
+        public final double high;
+        public final double low;
+
+        public WeatherEvent(int weatherId, double high, double low, String desc) {
+            this.weatherId = weatherId;
+            this.high = high;
+            this.low = low;
+            this.desc = desc;
+        }
+
+        public final String desc;
+    }
+
 }

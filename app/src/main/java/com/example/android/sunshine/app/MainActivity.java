@@ -39,8 +39,6 @@ import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.wearable.Wearable;
 
-import org.greenrobot.eventbus.EventBus;
-
 public class MainActivity extends AppCompatActivity implements ForecastFragment.Callback, GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener {
 
     private final String LOG_TAG = MainActivity.class.getSimpleName();
@@ -127,7 +125,6 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
     @Override
     protected void onStart() {
         super.onStart();
-        EventBus.getDefault().register(this);
         if (!mResolvingError) {
             mGoogleApiClient.connect();
         }
@@ -135,7 +132,6 @@ public class MainActivity extends AppCompatActivity implements ForecastFragment.
 
     @Override
     protected void onStop() {
-        EventBus.getDefault().unregister(this);
         if (!mResolvingError && (mGoogleApiClient != null) && (mGoogleApiClient.isConnected())) {
             mGoogleApiClient.disconnect();
         }
