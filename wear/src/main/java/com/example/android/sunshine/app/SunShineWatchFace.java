@@ -31,18 +31,13 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
-import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
-import com.google.android.gms.wearable.DataApi;
-import com.google.android.gms.wearable.DataEventBuffer;
 import com.google.android.gms.wearable.MessageApi;
 import com.google.android.gms.wearable.Node;
 import com.google.android.gms.wearable.NodeApi;
@@ -104,7 +99,7 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
         }
     }
 
-    private class Engine extends CanvasWatchFaceService.Engine implements GoogleApiClient.ConnectionCallbacks, GoogleApiClient.OnConnectionFailedListener, DataApi.DataListener {
+    private class Engine extends CanvasWatchFaceService.Engine  {
 
         private static final String SYNC_WEATHER_PATH = "/sync-weather";
 
@@ -202,8 +197,6 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
 
             mGoogleApiClient = new GoogleApiClient.Builder(getApplicationContext())
                     .addApi(Wearable.API)
-                    .addConnectionCallbacks(this)
-                    .addOnConnectionFailedListener(this)
                     .build();
 
             new Thread(new Runnable() {
@@ -258,11 +251,9 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
                 invalidate();
             } else {
                 if ((mGoogleApiClient != null) && mGoogleApiClient.isConnected()) {
-                    Wearable.DataApi.removeListener(mGoogleApiClient, this);
                     mGoogleApiClient.disconnect();
                 }
                 unregisterReceiver();
-
                 EventBus.getDefault().unregister(this);
             }
 
@@ -418,29 +409,6 @@ public class SunShineWatchFace extends CanvasWatchFaceService  {
                         - (timeMs % INTERACTIVE_UPDATE_RATE_MS);
                 mUpdateTimeHandler.sendEmptyMessageDelayed(MSG_UPDATE_TIME, delayMs);
             }
-        }
-
-        @Override
-        public void onConnected(@Nullable Bundle bundle) {
-            Wearable.DataApi.addListener(mGoogleApiClient, this);
-        }
-
-        @Override
-        public void onConnectionSuspended(int i) {
-
-        }
-
-        @Override
-        public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
-
-        }
-
-
-
-        @Override
-        public void onDataChanged(DataEventBuffer dataEventBuffer) {
-            Log.i(TAG, "onDataChanged");
-
         }
 
         @Subscribe
